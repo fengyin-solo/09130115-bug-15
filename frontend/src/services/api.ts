@@ -18,19 +18,80 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const url: string = error.config?.url || '';
+    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/login-status');
+    // 登录接口自身的 401（密码错误）不能触发整页跳转——否则错误提示刚渲染
+    // 就被页面重载清掉，表现为"弹窗一闪而过"。
+    // 429（账号锁定）同样交给登录页持久展示。
+    if (error.response?.status === 401 && !isAuthEndpoint) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
 );
 
+/** 从后端错误响应中提取结构化信息，兼容旧的字符串 detail。 */
+export function extractLoginError(error: any): {
+  message: string;
+  code?: string;
+  locked?: boolean;
+  secondsRemaining?: number;
+  failures?: number;
+  attemptsLeft?: number;
+  maxFailures?: number;
+  lockoutSeconds?: number;
+} {
+  const detail = error?.response?.data?.detail;
+  if (detail && typeof detail === 'object') {
+    return {
+      message: detail.message || '登录失败',
+      code: detail.code,
+      locked: detail.locked,
+      secondsRemaining: detail.seconds_remaining,
+      failures: detail.failures,
+      attemptsLeft: detail.attempts_left,
+      maxFailures: detail.max_failures,
+      lockoutSeconds: detail.lockout_seconds,
+    };
+  }
+  if (typeof detail === 'string' && detail) {
+    return { message: detail };
+  }
+  if (error?.response?.status === 429) {
+    const retryAfter = Number(error.response.headers?.['retry-after']);
+    return {
+      message: Number.isFinite(retryAfter)
+        ? `密码错误次数过多，账号已临时锁定，请 ${retryAfter} 秒后再试`
+        : '密码错误次数过多，账号已临时锁定，请稍后再试',
+      code: 'account_locked',
+      locked: true,
+      secondsRemaining: Number.isFinite(retryAfter) ? retryAfter : undefined,
+    };
+  }
+  return { message: error?.message ? '网络异常，请稍后重试' : '登录失败' };
+}
+
+export interface LoginStatusResponse {
+  locked: boolean;
+  seconds_remaining: number;
+  failures: number;
+  max_failures: number;
+  lockout_seconds: number;
+  server_time: number;
+}
+
 export const authAPI = {
   login: (username: string, password: string) =>
     api.post('/auth/login', new URLSearchParams({ username, password }), {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }),
+  loginStatus: (username: string) =>
+    api.get<LoginStatusResponse>('/auth/login-status', {
+      params: { username },
     }),
   register: (data: any) => api.post('/auth/register', data),
   getCurrentUser: () => api.get('/auth/me'),

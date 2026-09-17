@@ -8,6 +8,16 @@ class Token(BaseModel):
     token_type: str
 
 
+class LoginStatus(BaseModel):
+    """某个 (用户名, 当前来源IP) 的登录限制状态。"""
+    locked: bool
+    seconds_remaining: int
+    failures: int
+    max_failures: int
+    lockout_seconds: int
+    server_time: float
+
+
 class TokenData(BaseModel):
     username: Optional[str] = None
 

@@ -37,6 +37,58 @@ password: admin123
 }
 ```
 
+#### 登录失败锁定规则
+
+失败计数按 **(规范化用户名, 来源IP)** 分别计算，不同账号、不同网络来源互不影响：
+
+- 同一来源连续输错密码达到 `LOGIN_MAX_FAILURES`（默认 5）次，账号在该来源临时锁定 `LOGIN_LOCKOUT_SECONDS`（默认 300）秒；
+- 锁定期间即使密码正确也返回 `429`，且不重置/延长锁定到期时间；
+- 锁定到期后自动解除并重新计数；成功登录会立即清零失败记录；
+- 剩余秒数由服务端根据绝对到期时间戳计算（`server_time` 一并返回），客户端倒计时应以此校准；
+- 用户名提交前统一去除首尾空白；密码保留原始输入。
+
+密码错误响应 `401`（结构化 detail）:
+```json
+{
+  "detail": {
+    "code": "bad_credentials",
+    "message": "用户名或密码错误，再错 2 次账号将临时锁定 5 分钟",
+    "locked": false,
+    "failures": 3,
+    "attempts_left": 2
+  }
+}
+```
+
+锁定响应 `429`（带 `Retry-After` 头）:
+```json
+{
+  "detail": {
+    "code": "account_locked",
+    "message": "密码错误次数过多，账号已临时锁定，请 247 秒后再试。锁定期间即使输入正确密码也无法登录。",
+    "locked": true,
+    "seconds_remaining": 247
+  }
+}
+```
+
+### 查询登录限制状态
+
+**GET** `/auth/login-status?username=demo`
+
+按当前请求来源 IP 返回该用户名的锁定/失败状态，供用户从其它入口重新进入登录页时恢复同一条提示与倒计时。不区分用户是否存在，不可用于枚举账号。
+
+```json
+{
+  "locked": true,
+  "seconds_remaining": 247,
+  "failures": 0,
+  "max_failures": 5,
+  "lockout_seconds": 300,
+  "server_time": 1700000000.123
+}
+```
+
 ## 接口列表
 
 ---
@@ -47,9 +99,15 @@ password: admin123
 
 **POST** `/auth/login`
 
-获取访问令牌。
+获取访问令牌。失败与锁定行为见上文"登录失败锁定规则"。
 
-### 1.2 用户注册
+### 1.2 查询登录限制状态
+
+**GET** `/auth/login-status`
+
+查询参数：`username`。返回当前来源 IP 下的锁定状态与剩余秒数。
+
+### 1.3 用户注册
 
 **POST** `/auth/register`
 
@@ -63,7 +121,7 @@ password: admin123
 }
 ```
 
-### 1.3 获取当前用户信息
+### 1.4 获取当前用户信息
 
 **GET** `/auth/me`
 
@@ -82,7 +140,7 @@ password: admin123
 }
 ```
 
-### 1.4 更新当前用户信息
+### 1.5 更新当前用户信息
 
 **PUT** `/auth/me`
 
