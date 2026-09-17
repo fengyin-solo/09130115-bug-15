@@ -66,6 +66,41 @@ class CacheService:
         if key in self._cache:
             del self._cache[key]
 
+    def increment(self, key: str, amount: int = 1, expire_seconds: Optional[int] = None) -> int:
+        """原子自增；首次创建时可附带过期时间。Redis 不可用时降级为内存计数。"""
+        if self._use_redis:
+            try:
+                pipe = self.redis_client.pipeline()
+                pipe.incr(key, amount)
+                if expire_seconds is not None:
+                    pipe.expire(key, expire_seconds)
+                results = pipe.execute()
+                return int(results[0])
+            except Exception as e:
+                print(f"Cache increment error: {e}")
+        self._clean_expired()
+        value, expire = self._cache.get(key, (0, None))
+        value = int(value) + amount
+        if expire is None and expire_seconds is not None:
+            expire = time.time() + expire_seconds
+        self._cache[key] = (value, expire)
+        return value
+
+    def ttl(self, key: str) -> int:
+        """剩余存活秒数；key 不存在或已过期返回 -1（与 Redis TTL 语义一致）。"""
+        if self._use_redis:
+            try:
+                return int(self.redis_client.ttl(key))
+            except Exception as e:
+                print(f"Cache ttl error: {e}")
+        self._clean_expired()
+        if key not in self._cache:
+            return -1
+        _, expire = self._cache[key]
+        if expire is None:
+            return -1
+        return max(0, int(expire - time.time()))
+
     def get_json(self, key: str) -> Optional[dict]:
         if self._use_redis:
             try:

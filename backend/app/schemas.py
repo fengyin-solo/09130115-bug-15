@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Optional, List, Any
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from .services import login_guard
 
 
 class Token(BaseModel):
@@ -12,6 +14,16 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 
+class LoginStatus(BaseModel):
+    """登录锁定状态查询结果（按 用户名 + 来源IP 维度）。"""
+    username: str
+    locked: bool
+    remaining_seconds: int = 0
+    remaining_attempts: Optional[int] = None
+    max_failures: int
+    lock_seconds: int
+
+
 class UserBase(BaseModel):
     username: str
     email: EmailStr
@@ -21,11 +33,38 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
+    @field_validator("username")
+    @classmethod
+    def _normalize_and_check_username(cls, v: str) -> str:
+        username = login_guard.normalize_username(v)
+        error = login_guard.validate_username(username)
+        if error:
+            raise ValueError(error)
+        return username
+
+    @field_validator("password")
+    @classmethod
+    def _check_password(cls, v: str) -> str:
+        error = login_guard.validate_password(v)
+        if error:
+            raise ValueError(error)
+        return v
+
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     password: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def _check_password(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        error = login_guard.validate_password(v)
+        if error:
+            raise ValueError(error)
+        return v
 
 
 class User(UserBase):

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
+    # 登录失败锁定策略：同一用户名 + 同一网络来源连续失败达到上限后临时锁定
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_LOCK_SECONDS: int = 300
+
     SEISMIC_DATA_DIR: str = "/data/seismic"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024 * 1024
     CHUNK_SIZE: int = 8 * 1024 * 1024

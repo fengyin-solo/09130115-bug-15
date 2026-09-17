@@ -1,6 +1,16 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { authAPI } from '../../services/api';
 import { User } from '../../types';
+import { normalizeUsername, validateUsername, validatePassword } from '../../utils/validation';
+
+export interface LoginErrorPayload {
+  code: 'invalid_format' | 'bad_credentials' | 'locked' | 'unknown';
+  message: string;
+  remainingAttempts?: number;
+  remainingSeconds?: number;
+  maxFailures?: number;
+  lockSeconds?: number;
+}
 
 interface AuthState {
   user: User | null;
@@ -18,11 +28,39 @@ const initialState: AuthState = {
   error: null,
 };
 
+function normalizeLoginError(error: any): LoginErrorPayload {
+  const detail = error.response?.data?.detail;
+  if (detail && typeof detail === 'object' && detail.message) {
+    return {
+      code: detail.code ?? 'unknown',
+      message: detail.message,
+      remainingAttempts: detail.remaining_attempts,
+      remainingSeconds: detail.remaining_seconds,
+      maxFailures: detail.max_failures,
+      lockSeconds: detail.lock_seconds,
+    };
+  }
+  return {
+    code: 'unknown',
+    message: typeof detail === 'string' && detail ? detail : '登录失败，请稍后重试',
+  };
+}
+
 export const login = createAsyncThunk(
   'auth/login',
   async ({ username, password }: { username: string; password: string }, { rejectWithValue }) => {
+    // 提交前按统一标准归一化/校验，避免非法格式绕过前端规则
+    const normalizedUsername = normalizeUsername(username);
+    const usernameError = validateUsername(normalizedUsername);
+    if (usernameError) {
+      return rejectWithValue({ code: 'invalid_format', message: usernameError });
+    }
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return rejectWithValue({ code: 'invalid_format', message: passwordError });
+    }
     try {
-      const response = await authAPI.login(username, password);
+      const response = await authAPI.login(normalizedUsername, password);
       const { access_token } = response.data;
       localStorage.setItem('token', access_token);
 
@@ -32,7 +70,7 @@ export const login = createAsyncThunk(
 
       return { user, token: access_token };
     } catch (error: any) {
-      return rejectWithValue(error.response?.data?.detail || '登录失败');
+      return rejectWithValue(normalizeLoginError(error));
     }
   }
 );
@@ -44,7 +82,12 @@ export const register = createAsyncThunk(
       const response = await authAPI.register(userData);
       return response.data;
     } catch (error: any) {
-      return rejectWithValue(error.response?.data?.detail || '注册失败');
+      const detail = error.response?.data?.detail;
+      const message =
+        detail && typeof detail === 'object'
+          ? Object.values(detail).flat().join('；')
+          : detail || '注册失败';
+      return rejectWithValue(message);
     }
   }
 );
@@ -86,7 +129,7 @@ const authSlice = createSlice({
       })
       .addCase(login.rejected, (state, action: PayloadAction<any>) => {
         state.loading = false;
-        state.error = action.payload as string;
+        state.error = (action.payload as LoginErrorPayload)?.message || '登录失败';
       })
       .addCase(register.pending, (state) => {
         state.loading = true;

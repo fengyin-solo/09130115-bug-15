@@ -37,6 +37,40 @@ password: admin123
 }
 ```
 
+#### 登录失败锁定规则
+
+- 计数维度为「用户名 + 网络来源IP」（来源IP取 `X-Forwarded-For` 首段或直连IP），不同账号、不同来源的失败次数互不影响。
+- 同一维度连续失败达到上限（默认 `LOGIN_MAX_FAILURES=5` 次）后临时锁定（默认 `LOGIN_LOCK_SECONDS=300` 秒）；锁定期间不校验密码，即使密码正确也返回 `429`。
+- 剩余锁定时间以服务端 TTL 为唯一权威来源（响应体 `remaining_seconds` 与 `Retry-After` 头），前端据此校准本地倒计时。
+- 登录成功立即清除该维度的失败计数；锁定到期后计数从零重新开始。
+- 用户名/密码在提交前后端均按统一标准处理：用户名做 NFKC 归一化并去除首尾空白，需为 3-50 位字母/数字/下划线；密码长度 6-72 位且首尾不得有空白。
+
+普通密码错误返回 `401`：
+```json
+{"detail": {"code": "bad_credentials", "message": "用户名或密码错误", "remaining_attempts": 4, "max_failures": 5}}
+```
+
+已锁定返回 `429`（含 `Retry-After` 响应头）：
+```json
+{"detail": {"code": "locked", "message": "登录失败次数过多，账号已临时锁定，请稍后再试",
+            "remaining_seconds": 287, "max_failures": 5, "lock_seconds": 300}}
+```
+
+格式非法返回 `400`，且不消耗失败次数：
+```json
+{"detail": {"code": "invalid_format", "message": "密码至少6个字符"}}
+```
+
+#### 查询登录状态
+
+**GET** `/auth/login-status?username=alice`
+
+供登录页进入或切换用户名时查询当前锁定状态，使用户从其它入口重新登录时看到同一提示：
+```json
+{"username": "alice", "locked": true, "remaining_seconds": 120,
+ "remaining_attempts": 0, "max_failures": 5, "lock_seconds": 300}
+```
+
 ## 接口列表
 
 ---

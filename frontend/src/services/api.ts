@@ -1,5 +1,12 @@
 import axios from 'axios';
 
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    /** 标记该请求不触发“token 失效”强制跳转（登录/注册/状态查询接口使用） */
+    skipAuthRedirect?: boolean;
+  }
+}
+
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1';
 
 const api = axios.create({
@@ -18,7 +25,8 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const config = error.config as any;
+    if (error.response?.status === 401 && !config?.skipAuthRedirect) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
@@ -29,10 +37,19 @@ api.interceptors.response.use(
 
 export const authAPI = {
   login: (username: string, password: string) =>
-    api.post('/auth/login', new URLSearchParams({ username, password }), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }),
-  register: (data: any) => api.post('/auth/register', data),
+    api.post(
+      '/auth/login',
+      new URLSearchParams({ username, password }),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        // 登录接口自身的 401/429 属于正常业务响应，不能触发“token 失效”跳转
+        skipAuthRedirect: true,
+      }
+    ),
+  // 状态查询接口同样不应触发鉴权跳转
+  loginStatus: (username: string) =>
+    api.get('/auth/login-status', { params: { username }, skipAuthRedirect: true }),
+  register: (data: any) => api.post('/auth/register', data, { skipAuthRedirect: true }),
   getCurrentUser: () => api.get('/auth/me'),
   updateCurrentUser: (data: any) => api.put('/auth/me', data),
 };
